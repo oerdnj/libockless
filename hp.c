@@ -100,7 +100,7 @@ ll_hp_init(int max_threads) {
 
 ll_hp_t *
 ll_hp_new(size_t max_hps, ll_hp_deletefunc_t *deletefunc) {
-	ll_hp_t *hp = calloc(1, sizeof(*hp));
+	ll_hp_t *hp = aligned_alloc(128, sizeof(*hp));
 
 	if (max_hps == 0) {
 		max_hps = HP_MAX_HPS;

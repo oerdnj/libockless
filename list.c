@@ -9,8 +9,12 @@
 
 #include "hp.h"
 
-#define NELEMENTS 1024
-#define NTHREADS 126
+#define NELEMENTS 128
+#define NTHREADS 128 / 4
+#define MAX_THREADS 128
+
+static atomic_uint_fast32_t deletes = 0;
+static atomic_uint_fast32_t inserts = 0;
 
 /* PUBLIC */
 
@@ -47,7 +51,8 @@ ll_list_contains(ll_list_t *list, ll_key_t key);
 #define get_unmarked_node(p) ((ll_node_t *)get_unmarked(p))
 
 struct ll_node {
-	atomic_uintptr_t next;
+	alignas(128) uint32_t magic;
+	alignas(128) atomic_uintptr_t next;
 	ll_key_t key;
 };
 
@@ -61,15 +66,21 @@ struct ll_list {
 
 ll_node_t *
 ll_node_new(ll_key_t key) {
-	ll_node_t *node = calloc(1, sizeof(*node));
+	ll_node_t *node = aligned_alloc(128, sizeof(*node));
 	assert(node != NULL);
-	*node = (ll_node_t){ .key = key };
+	*node = (ll_node_t){ .magic = 0xdeadbeaf, .key = key };
+	(void)atomic_fetch_add(&inserts, 1);
 	return (node);
 }
 
 void
 ll_node_destroy(ll_node_t *node) {
+	if (node == NULL) {
+		return;
+	}
+	assert(node->magic == 0xdeadbeaf);
 	free(node);
+	(void)atomic_fetch_add(&deletes, 1);
 }
 
 static void
@@ -215,16 +226,19 @@ ll_list_new(void) {
 void
 ll_list_destroy(ll_list_t *list) {
 	assert(list != NULL);
+	ll_node_t *prev = (ll_node_t *)atomic_load(&list->head);
+	ll_node_t *node = (ll_node_t *)atomic_load(&prev->next);
+	while (node != NULL) {
+		ll_node_destroy(prev);
+		prev = node;
+		node = (ll_node_t *)atomic_load(&prev->next);
+	}
+	ll_node_destroy(prev);
 	ll_hp_destroy(list->hp);
-	ll_node_destroy((ll_node_t *)list->head);
-	ll_node_destroy((ll_node_t *)list->tail);
 	free(list);
 }
 
-static atomic_uint_fast32_t deletes = 0;
-static atomic_uint_fast32_t inserts = 0;
-
-static uintptr_t elements[NTHREADS + 1][NELEMENTS];
+static uintptr_t elements[MAX_THREADS + 1][NELEMENTS];
 
 #define TID_UNKNOWN -1
 
@@ -236,7 +250,7 @@ static inline int
 tid(void) {
 	if (tid_v == TID_UNKNOWN) {
 		tid_v = atomic_fetch_add(&tid_v_base, 1);
-		assert(tid_v < NTHREADS + 1);
+		assert(tid_v < MAX_THREADS);
 	}
 
 	return (tid_v);
@@ -247,8 +261,7 @@ insert_thread(void *arg) {
 	ll_list_t *list = (ll_list_t *)arg;
 
 	for (size_t i = 0; i < NELEMENTS; i++) {
-		ll_list_insert(list, elements[tid()][i]);
-		(void)atomic_fetch_add(&inserts, 1);
+		(void)ll_list_insert(list, (uintptr_t)&elements[tid()][i]);
 	}
 	return NULL;
 }
@@ -258,8 +271,7 @@ delete_thread(void *arg) {
 	ll_list_t *list = (ll_list_t *)arg;
 
 	for (size_t i = 0; i < NELEMENTS; i++) {
-		(void)atomic_fetch_add(&deletes, 1);
-		ll_list_delete(list, elements[tid()][i]);
+		(void)ll_list_delete(list, (uintptr_t)&elements[tid()][i]);
 	}
 	return NULL;
 }
@@ -288,10 +300,29 @@ main(void) {
 		for (size_t i = 0; i < nthreads; i++) {
 			pthread_join(threads[i], NULL);
 		}
+
+		/* for (size_t i = 0; i < nthreads; i++) { */
+		/* 	pthread_create(&threads[i], NULL, insert_thread, list); */
+		/* } */
+
+		/* for (size_t i = 0; i < nthreads; i++) { */
+		/* 	pthread_join(threads[i], NULL); */
+		/* } */
+
+		/* for (size_t i = 0; i < nthreads; i++) { */
+		/* 	pthread_create(&threads[i], NULL, delete_thread, list); */
+		/* } */
+
+		/* for (size_t i = 0; i < nthreads; i++) { */
+		/* 	pthread_join(threads[i], NULL); */
+		/* } */
 	}
 
-	delete_thread(list);
-	delete_thread(list);
+	for (size_t i = 0; i < NELEMENTS; i++) {
+		for (size_t j = 0; j < tid_v_base; j++) {
+			ll_list_delete(list, (uintptr_t)&elements[j][i]);
+		}
+	}
 
 	ll_list_destroy(list);
 
