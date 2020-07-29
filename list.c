@@ -10,9 +10,7 @@
 #include "hp.h"
 
 #define NELEMENTS 1024
-#define NTHREADS 8
-
-#define DeleteNode(n) free(n);
+#define NTHREADS 126
 
 /* PUBLIC */
 
@@ -114,7 +112,7 @@ try_again:
 				*par_next = next;
 				return (get_unmarked_node(curr)->key == *key);
 			}
-			prev = (atomic_uintptr_t *)&get_unmarked_node(curr)->next;
+			prev = &get_unmarked_node(curr)->next;
 			(void)ll_hp_protect_release(list->hp, HP_PREV, get_unmarked(curr));
 		} else {
 			uintptr_t tmp = get_unmarked(curr);
@@ -173,6 +171,7 @@ ll_list_delete(ll_list_t *list, ll_key_t key) {
 			continue;
 		}
 
+		tmp = get_unmarked(curr);
 		if (atomic_compare_exchange_strong(prev, &tmp, get_unmarked(next))) {
 			ll_hp_clear(list->hp);
 			ll_hp_retire(list->hp, get_unmarked(curr));
