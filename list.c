@@ -261,14 +261,11 @@ static void
 _HelpDelete(list_t *list, node_t *node, char *file, unsigned int line);
 static void
 _RemoveCrossReference(list_t *list, node_t *node, char *file, unsigned int line);
-static void
-_MarkPrev(node_t *node, char *file, unsigned int line);
 
 #define PushCommon(l, n, e) _PushCommon(l, n, e, __FILE__, __LINE__)
 #define HelpInsert(l, p, n) _HelpInsert(l, p, n, __FILE__, __LINE__)
 #define HelpDelete(l, n) _HelpDelete(l, n, __FILE__, __LINE__)
 #define RemoveCrossReference(l, n) _RemoveCrossReference(l, n, __FILE__, __LINE__)
-#define MarkPrev(n) _MarkPrev(n, __FILE__, __LINE__)
 
 /*
  * PL1  node:=CreateNode(value);
@@ -344,23 +341,6 @@ PushRight(list_t *list, void *value) {
 		sched_yield(); /* PR13 */
 	}
 	PushCommon(list, node, next); /* PR14 */
-}
-
-/*
- * procedure MarkPrev(node:pointer to Node)
- * MP1  while T do
- * MP2  link1:=node.prev;
- * MP3 if link1.d = T or CAS(&node.prev,link1,〈link1.p,T〉) then break;
- */
-void
-_MarkPrev(node_t *node, char *file, unsigned int line) {
-	pnode("MarkPrev:node", node, file, line);
-	for (;;) { /* MP1 */
-		link_t link1 = atomic_load(&node->prev); /* MP2 */
-		if (is_marked(link1) || CAS(&node->prev, link1, get_marked(link1))) { /* MP3 */
-			break; /* MP3 */
-		}
-	}
 }
 
 /*
